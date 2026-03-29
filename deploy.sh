@@ -18,13 +18,9 @@ if ! command -v node &> /dev/null; then
   apt install -y nodejs
 fi
 
-# Install dependencies
+# Install production dependencies only
 echo "Installing dependencies..."
-npm install --production
-
-# Build
-echo "Building..."
-npx tsc
+npm install --omit=dev
 
 # Setup .env
 if [ ! -f .env ]; then
@@ -33,7 +29,8 @@ if [ ! -f .env ]; then
   echo "  CONFIGURATION"
   echo "============================================"
   read -p "Main Snipr server database IP (e.g., 104.218.51.234): " DB_IP
-  read -p "Database password: " DB_PASS
+  read -s -p "Database password: " DB_PASS
+  echo ""
   read -p "Main Snipr domain (e.g., snipr.sh): " SNIPR_DOMAIN
   
   cat > .env << EOF
@@ -64,19 +61,13 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Install Nginx
+# Install and configure Nginx
 apt install -y nginx
 
-# Nginx catch-all config
 cat > /etc/nginx/sites-available/snipr-redirect << 'NGINXEOF'
 server {
     listen 80 default_server;
-    listen 443 ssl default_server;
     server_name _;
-
-    # Self-signed fallback cert (replace with real certs per domain)
-    ssl_certificate /etc/nginx/ssl/default.crt;
-    ssl_certificate_key /etc/nginx/ssl/default.key;
 
     location / {
         proxy_pass http://127.0.0.1:8080;
@@ -89,15 +80,6 @@ server {
 }
 NGINXEOF
 
-# Generate self-signed fallback cert
-mkdir -p /etc/nginx/ssl
-if [ ! -f /etc/nginx/ssl/default.crt ]; then
-  openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-    -keyout /etc/nginx/ssl/default.key \
-    -out /etc/nginx/ssl/default.crt \
-    -subj "/CN=snipr-redirect" 2>/dev/null
-fi
-
 ln -sf /etc/nginx/sites-available/snipr-redirect /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
@@ -107,17 +89,19 @@ systemctl daemon-reload
 systemctl enable snipr-redirect
 systemctl start snipr-redirect
 
+sleep 2
 echo ""
 echo "============================================"
 echo "  SNIPR REDIRECT SERVER DEPLOYED!"
 echo "============================================"
 echo ""
+echo "  Status: $(systemctl is-active snipr-redirect)"
 echo "  Health: curl http://localhost:8080/health"
 echo ""
-echo "  IMPORTANT: Configure PostgreSQL on main"
-echo "  server to allow connections from this IP."
-echo "  Edit: /etc/postgresql/*/main/pg_hba.conf"
-echo "  Add:  host snipr_prod snipr_user THIS_SERVER_IP/32 md5"
-echo "  Then: systemctl reload postgresql"
+echo "  IMPORTANT: On your MAIN server, allow"
+echo "  this server to connect to PostgreSQL:"
+echo ""
+echo "  echo 'host snipr_prod snipr_user THIS_IP/32 md5' >> /etc/postgresql/16/main/pg_hba.conf"
+echo "  systemctl reload postgresql"
 echo ""
 echo "============================================"
