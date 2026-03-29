@@ -105,3 +105,35 @@ echo "  echo 'host snipr_prod snipr_user THIS_IP/32 md5' >> /etc/postgresql/16/m
 echo "  systemctl reload postgresql"
 echo ""
 echo "============================================"
+
+# ─── SSL Auto-Manager Service ─────────────────────
+echo "Setting up SSL auto-manager..."
+
+apt install -y certbot python3-certbot-nginx > /dev/null 2>&1
+
+cat > /etc/systemd/system/snipr-ssl-manager.service << EOF
+[Unit]
+Description=Snipr SSL Auto-Manager
+After=network.target snipr-redirect.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$(pwd)
+EnvironmentFile=$(pwd)/.env
+Environment=SSL_EMAIL=admin@snipr.sh
+ExecStart=/usr/bin/node dist/ssl-manager.js
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable snipr-ssl-manager
+systemctl start snipr-ssl-manager
+
+echo ""
+echo "  SSL Manager: $(systemctl is-active snipr-ssl-manager)"
+echo "  Auto-SSL will install certs for verified domains every 60s"
