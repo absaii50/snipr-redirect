@@ -221,7 +221,8 @@ app.get("/health", (_req, res) => {
 });
 
 // ─── Main Redirect Handler ──────────────────────────────
-app.get("*", async (req, res) => {
+app.use(async (req: express.Request, res: express.Response) => {
+  if (req.method !== "GET" && req.method !== "HEAD") { res.status(405).send("Method Not Allowed"); return; }
   const rawHost = (req.headers["x-forwarded-host"] as string) || req.headers.host || "";
   const host = rawHost.split(":")[0].toLowerCase().trim();
 

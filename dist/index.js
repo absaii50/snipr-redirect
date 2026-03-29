@@ -184,7 +184,11 @@ app.get("/health", (_req, res) => {
     res.json({ status: "ok", service: "snipr-redirect", uptime: process.uptime() });
 });
 // ─── Main Redirect Handler ──────────────────────────────
-app.get("*", async (req, res) => {
+app.use(async (req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+        res.status(405).send("Method Not Allowed");
+        return;
+    }
     const rawHost = req.headers["x-forwarded-host"] || req.headers.host || "";
     const host = rawHost.split(":")[0].toLowerCase().trim();
     if (!host || !host.includes(".")) {
