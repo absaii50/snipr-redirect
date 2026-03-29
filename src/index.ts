@@ -77,15 +77,22 @@ async function lookupLink(slug: string, workspaceId: string, domainId: string): 
 }
 
 // ─── Click Tracking (async, non-blocking) ────────────────
+function hashIp(ip: string): string {
+  const crypto = require("crypto");
+  return crypto.createHash("sha256").update(ip + "snipr-salt").digest("hex").slice(0, 16);
+}
+
 async function trackClick(req: express.Request, link: LinkRecord): Promise<void> {
   try {
     const ip = ((req.headers["x-forwarded-for"] as string) || req.ip || "").split(",")[0].trim();
+    const ipHash = ip ? hashIp(ip) : null;
     let country: string | null = null;
     let city: string | null = null;
     let device = "desktop";
     let browser: string | null = null;
     let os: string | null = null;
     const referrer = (req.headers.referer || req.headers.referrer || null) as string | null;
+    const userAgent = (req.headers["user-agent"] || null) as string | null;
 
     try {
       const geoip = require("geoip-lite");
@@ -102,9 +109,9 @@ async function trackClick(req: express.Request, link: LinkRecord): Promise<void>
     } catch {}
 
     await pool.query(
-      `INSERT INTO click_events (id, link_id, timestamp, ip, country, city, device, browser, os, referrer, is_qr)
-       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, false)`,
-      [link.id, ip, country, city, device, browser, os, referrer]
+      `INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr)
+       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, false)`,
+      [link.id, ipHash, country, city, device, browser, os, referrer, userAgent]
     );
   } catch (err) {
     logger.error({ err }, "Click tracking failed");

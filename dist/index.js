@@ -45,15 +45,21 @@ async function lookupLink(slug, workspaceId, domainId) {
     return rows[0] || null;
 }
 // ─── Click Tracking (async, non-blocking) ────────────────
+function hashIp(ip) {
+    const crypto = require("crypto");
+    return crypto.createHash("sha256").update(ip + "snipr-salt").digest("hex").slice(0, 16);
+}
 async function trackClick(req, link) {
     try {
         const ip = (req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+        const ipHash = ip ? hashIp(ip) : null;
         let country = null;
         let city = null;
         let device = "desktop";
         let browser = null;
         let os = null;
         const referrer = (req.headers.referer || req.headers.referrer || null);
+        const userAgent = (req.headers["user-agent"] || null);
         try {
             const geoip = require("geoip-lite");
             const geo = geoip.lookup(ip);
@@ -71,8 +77,8 @@ async function trackClick(req, link) {
             os = ua.os.name || null;
         }
         catch { }
-        await pool.query(`INSERT INTO click_events (id, link_id, timestamp, ip, country, city, device, browser, os, referrer, is_qr)
-       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, false)`, [link.id, ip, country, city, device, browser, os, referrer]);
+        await pool.query(`INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr)
+       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, false)`, [link.id, ipHash, country, city, device, browser, os, referrer, userAgent]);
     }
     catch (err) {
         logger.error({ err }, "Click tracking failed");
