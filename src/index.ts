@@ -68,10 +68,10 @@ async function lookupParentDomain(parentDomain: string): Promise<DomainRecord | 
   return record;
 }
 
-async function lookupLink(slug: string, workspaceId: string, domainId: string): Promise<LinkRecord | null> {
+async function lookupLink(slug: string, domainId: string): Promise<LinkRecord | null> {
   const { rows } = await pool.query<LinkRecord>(
-    `SELECT id, slug, destination_url, enabled, workspace_id, domain_id FROM links WHERE slug = $1 AND workspace_id = $2 AND domain_id = $3 LIMIT 1`,
-    [slug, workspaceId, domainId]
+    `SELECT id, slug, destination_url, enabled, workspace_id, domain_id FROM links WHERE slug = $1 AND domain_id = $2 LIMIT 1`,
+    [slug, domainId]
   );
   return rows[0] || null;
 }
@@ -270,7 +270,7 @@ app.use(async (req: express.Request, res: express.Response) => {
   }
 
   // Look up link
-  const link = await lookupLink(slug, domainRecord.workspace_id, domainRecord.id);
+  const link = await lookupLink(slug, domainRecord.id);
 
   if (!link || !link.enabled) {
     res.status(404).send(notFoundPage(host));
