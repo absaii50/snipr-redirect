@@ -76,6 +76,19 @@ async function lookupLink(slug: string, domainId: string): Promise<LinkRecord | 
   return rows[0] || null;
 }
 
+// ─── Bot / Prefetch Filter ───────────────────────────────
+const BOT_UA_PATTERN = /bot|crawl|spider|slurp|facebookexternalhit|twitterbot|linkedinbot|whatsapp|telegram|discordbot|slack|preview|prefetch|wget|curl|python|java|ruby|go-http|axios|node-fetch|lighthouse|headless|phantom|puppeteer|playwright|chrome-lighthouse|googleweblight|adsbot|mediapartners|applebot|baiduspider|yandexbot|sogou|duckduckbot|exabot|ia_archiver|msnbot|semrushbot|ahrefsbot|dotbot|rogerbot|360spider|seznambot|blexbot|petalbot/i;
+
+function isBot(req: express.Request): boolean {
+  const ua = (req.headers["user-agent"] ?? "") as string;
+  if (!ua) return true;
+  if (BOT_UA_PATTERN.test(ua)) return true;
+  const purpose = (req.headers["purpose"] ?? req.headers["x-purpose"] ?? req.headers["x-moz"] ?? "") as string;
+  if (/prefetch/i.test(purpose)) return true;
+  if (req.method === "HEAD") return true;
+  return false;
+}
+
 // ─── Click Tracking (async, non-blocking) ────────────────
 function hashIp(ip: string): string {
   const crypto = require("crypto");
@@ -93,6 +106,13 @@ async function trackClick(req: express.Request, link: LinkRecord): Promise<void>
     let os: string | null = null;
     const referrer = (req.headers.referer || req.headers.referrer || null) as string | null;
     const userAgent = (req.headers["user-agent"] || null) as string | null;
+    const isQr = ["1", "true", "yes"].includes(String(req.query.qr || "").toLowerCase());
+
+    const utmSource = (req.query.utm_source as string) || null;
+    const utmMedium = (req.query.utm_medium as string) || null;
+    const utmCampaign = (req.query.utm_campaign as string) || null;
+    const utmTerm = (req.query.utm_term as string) || null;
+    const utmContent = (req.query.utm_content as string) || null;
 
     try {
       const geoip = require("geoip-lite");
@@ -109,9 +129,9 @@ async function trackClick(req: express.Request, link: LinkRecord): Promise<void>
     } catch {}
 
     await pool.query(
-      `INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr)
-       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, false)`,
-      [link.id, ipHash, country, city, device, browser, os, referrer, userAgent]
+      `INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr, utm_source, utm_medium, utm_campaign, utm_term, utm_content)
+       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [link.id, ipHash, country, city, device, browser, os, referrer, userAgent, isQr, utmSource, utmMedium, utmCampaign, utmTerm, utmContent]
     );
   } catch (err) {
     logger.error({ err }, "Click tracking failed");
@@ -277,8 +297,10 @@ app.use(async (req: express.Request, res: express.Response) => {
     return;
   }
 
-  // Track click async
-  setImmediate(() => { trackClick(req, link).catch(() => {}); });
+  // Track click async — skip bots, crawlers, HEAD requests, prefetch
+  if (!isBot(req)) {
+    setImmediate(() => { trackClick(req, link).catch(() => {}); });
+  }
 
   // Redirect
   res.redirect(301, link.destination_url);

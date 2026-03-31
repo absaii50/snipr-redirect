@@ -44,6 +44,21 @@ async function lookupLink(slug, workspaceId, domainId) {
     const { rows } = await pool.query(`SELECT id, slug, destination_url, enabled, workspace_id, domain_id FROM links WHERE slug = $1 AND workspace_id = $2 AND domain_id = $3 LIMIT 1`, [slug, workspaceId, domainId]);
     return rows[0] || null;
 }
+// ─── Bot / Prefetch Filter ───────────────────────────────
+const BOT_UA_PATTERN = /bot|crawl|spider|slurp|facebookexternalhit|twitterbot|linkedinbot|whatsapp|telegram|discordbot|slack|preview|prefetch|wget|curl|python|java|ruby|go-http|axios|node-fetch|lighthouse|headless|phantom|puppeteer|playwright|chrome-lighthouse|googleweblight|adsbot|mediapartners|applebot|baiduspider|yandexbot|sogou|duckduckbot|exabot|ia_archiver|msnbot|semrushbot|ahrefsbot|dotbot|rogerbot|360spider|seznambot|blexbot|petalbot/i;
+function isBot(req) {
+    const ua = (req.headers["user-agent"] ?? "");
+    if (!ua)
+        return true;
+    if (BOT_UA_PATTERN.test(ua))
+        return true;
+    const purpose = (req.headers["purpose"] ?? req.headers["x-purpose"] ?? req.headers["x-moz"] ?? "");
+    if (/prefetch/i.test(purpose))
+        return true;
+    if (req.method === "HEAD")
+        return true;
+    return false;
+}
 // ─── Click Tracking (async, non-blocking) ────────────────
 function hashIp(ip) {
     const crypto = require("crypto");
@@ -60,6 +75,12 @@ async function trackClick(req, link) {
         let os = null;
         const referrer = (req.headers.referer || req.headers.referrer || null);
         const userAgent = (req.headers["user-agent"] || null);
+        const isQr = ["1", "true", "yes"].includes(String(req.query.qr || "").toLowerCase());
+        const utmSource = req.query.utm_source || null;
+        const utmMedium = req.query.utm_medium || null;
+        const utmCampaign = req.query.utm_campaign || null;
+        const utmTerm = req.query.utm_term || null;
+        const utmContent = req.query.utm_content || null;
         try {
             const geoip = require("geoip-lite");
             const geo = geoip.lookup(ip);
@@ -77,8 +98,8 @@ async function trackClick(req, link) {
             os = ua.os.name || null;
         }
         catch { }
-        await pool.query(`INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr)
-       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, false)`, [link.id, ipHash, country, city, device, browser, os, referrer, userAgent]);
+        await pool.query(`INSERT INTO click_events (id, link_id, timestamp, ip_hash, country, city, device, browser, os, referrer, user_agent, is_qr, utm_source, utm_medium, utm_campaign, utm_term, utm_content)
+       VALUES (gen_random_uuid(), $1, NOW(), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`, [link.id, ipHash, country, city, device, browser, os, referrer, userAgent, isQr, utmSource, utmMedium, utmCampaign, utmTerm, utmContent]);
     }
     catch (err) {
         logger.error({ err }, "Click tracking failed");
@@ -232,8 +253,10 @@ app.use(async (req, res) => {
         res.status(404).send(notFoundPage(host));
         return;
     }
-    // Track click async
-    setImmediate(() => { trackClick(req, link).catch(() => { }); });
+    // Track click async — skip bots, crawlers, HEAD requests, prefetch
+    if (!isBot(req)) {
+        setImmediate(() => { trackClick(req, link).catch(() => { }); });
+    }
     // Redirect
     res.redirect(301, link.destination_url);
 });
