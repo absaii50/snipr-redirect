@@ -154,6 +154,10 @@ const _esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const BOT_UA_PATTERN = new RegExp(_unique.map(_esc).join("|"), "i");
 const PREFETCH_HEADERS = ["purpose", "x-purpose", "x-moz", "sec-purpose"];
 const PREFETCH_VALUES = /prefetch|prerender|preview/i;
+// Real browser detection — in-app browsers (WhatsApp, Instagram, Telegram, etc.)
+// have app name in UA but ALSO include full browser engine strings.
+// Pure bots do NOT have Mozilla/5.0 + browser engine.
+const REAL_BROWSER_PATTERN = /^Mozilla\/5\.0\s.+(?:AppleWebKit|Chrome|Firefox|Safari|Edg|OPR|Opera|Trident|Gecko)/i;
 function isBot(req) {
     if (req.method === "HEAD")
         return true;
@@ -162,13 +166,19 @@ function isBot(req) {
     const ua = (req.headers["user-agent"] ?? "");
     if (!ua || ua.length < 10)
         return true;
-    if (BOT_UA_PATTERN.test(ua))
-        return true;
+    // Prefetch headers — check before browser detection
     for (const h of PREFETCH_HEADERS) {
         const v = req.headers[h];
         if (v && PREFETCH_VALUES.test(v))
             return true;
     }
+    // Real browser check — if UA has Mozilla/5.0 + engine, it's a real user
+    // (even if inside WhatsApp, Instagram, Telegram, Facebook in-app browser)
+    if (REAL_BROWSER_PATTERN.test(ua))
+        return false;
+    // Only pure bot UAs reach here
+    if (BOT_UA_PATTERN.test(ua))
+        return true;
     return false;
 }
 // ─── Click Tracking (async, non-blocking) ────────────────
