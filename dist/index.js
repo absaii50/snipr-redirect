@@ -40,23 +40,135 @@ async function lookupParentDomain(parentDomain) {
     domainCache.set(`parent:${parentDomain}`, { data: record, ts: Date.now() });
     return record;
 }
-async function lookupLink(slug, workspaceId, domainId) {
-    const { rows } = await pool.query(`SELECT id, slug, destination_url, enabled, workspace_id, domain_id FROM links WHERE slug = $1 AND workspace_id = $2 AND domain_id = $3 LIMIT 1`, [slug, workspaceId, domainId]);
+async function lookupLink(slug, domainId) {
+    const { rows } = await pool.query(`SELECT id, slug, destination_url, enabled, workspace_id, domain_id FROM links WHERE slug = $1 AND domain_id = $2 LIMIT 1`, [slug, domainId]);
     return rows[0] || null;
 }
-// ─── Bot / Prefetch Filter ───────────────────────────────
-const BOT_UA_PATTERN = /bot|crawl|spider|slurp|facebookexternalhit|twitterbot|linkedinbot|whatsapp|telegram|discordbot|slack|preview|prefetch|wget|curl|python|java|ruby|go-http|axios|node-fetch|lighthouse|headless|phantom|puppeteer|playwright|chrome-lighthouse|googleweblight|adsbot|mediapartners|applebot|baiduspider|yandexbot|sogou|duckduckbot|exabot|ia_archiver|msnbot|semrushbot|ahrefsbot|dotbot|rogerbot|360spider|seznambot|blexbot|petalbot/i;
+// ─── Comprehensive Bot / Prefetch Filter ─────────────────
+// 200+ known bots, crawlers, scrapers, AI agents, SEO tools, monitoring, etc.
+const BOT_NAMES = [
+    // Search Engines
+    "googlebot", "google-inspectiontool", "googleother", "google-extended", "google-safety",
+    "googleproducer", "google-site-verification", "google-structured-data-testing-tool",
+    "google-xrawler", "googledocs", "googleimageproxy", "mediapartners-google", "mediapartners",
+    "adsbot-google", "adsbot", "apis-google", "feedfetcher-google", "google-read-aloud",
+    "duplex", "googleweblight", "storebot-google",
+    "bingbot", "bingpreview", "msnbot", "msnbot-media", "adidxbot", "microsoftpreview",
+    "binglocalsearch", "microsoftdocs",
+    "slurp", "yahoo", "yahoodirbot",
+    "yandexbot", "yandexaccessibilitybot", "yandexblogs", "yandexcalendar", "yandexdirect",
+    "yandexfavicons", "yandexfordomain", "yandeximages", "yandexmarket", "yandexmedia",
+    "yandexmetrika", "yandexnews", "yandexpagechecker", "yandexscreenshotbot", "yandexturbo",
+    "yandexvertis", "yandexvideo", "yandexwebmaster",
+    "baiduspider", "baiduspider-image", "baiduspider-video", "baiduspider-news",
+    "duckduckbot", "duckduckgo-favicons-bot", "duckassistbot",
+    "applebot", "applebot-extended",
+    "sogou", "sosospider", "exabot", "qwantify", "ia_archiver", "seznam", "seznambot", "ccbot",
+    "naver", "yeti", "coccoc", "mojeekbot", "petalbot", "barkrowler", "ecosia",
+    // Social Media / Chat Previews
+    "facebookexternalhit", "facebookcatalog", "facebot", "meta-externalagent",
+    "twitterbot", "tweetmemebot", "linkedinbot", "linkedin",
+    "whatsapp", "telegrambot", "telegram", "discordbot",
+    "slackbot", "slack-imgproxy", "slackbot-linkexpanding",
+    "pinterest", "pinterestbot", "snapchat", "viber", "line", "skypeuripreview",
+    "redditbot", "tumblr", "instagram", "micromessenger",
+    "kakaotalk-scrap", "kakaostory-og-reader", "mastodon", "zalobot", "threema",
+    // AI / LLM Crawlers
+    "gptbot", "chatgpt-user", "oai-searchbot", "claudebot", "claude-web", "anthropic-ai",
+    "perplexitybot", "cohere-ai", "bytespider", "bytedance", "tiktokbot",
+    "amazonbot", "alexabot", "apple-cloudkit", "diffbot", "neevabot", "youbot", "bravebot",
+    "ai2bot", "omgili", "omgilibot", "timpibot", "velenpublicwebcrawler", "kangaroobot",
+    // SEO / Marketing Tools
+    "ahrefsbot", "ahrefssiteaudit",
+    "semrushbot", "semrushbot-ba", "semrushbot-bm", "semrushbot-ct", "semrushbot-sa",
+    "semrushbot-si", "semrushbot-swa", "splitpagesignalbot",
+    "dotbot", "rogerbot", "mj12bot", "majestic12", "screaming frog seo spider",
+    "sistrix", "spyfu", "serpstatbot", "raventools", "deepcrawl", "contentkingapp",
+    "sitebulb", "oncrawl", "brightedge", "conductor", "botify", "seostar", "dataforseo",
+    "blexbot", "blex", "zoominfobot", "hubspot", "marketo", "pardot", "salesforce",
+    // Monitoring / Uptime
+    "uptimerobot", "pingdom", "statuscake", "hetrixtools", "site24x7", "freshping",
+    "updown.io", "montastic", "nodeping", "checkhost", "uptrends", "uptimia",
+    "datadog", "newrelic", "dynatrace", "appdynamics", "elastic", "prometheus",
+    "grafana", "zabbix", "nagios", "prtg", "solarwinds", "thousandeyes",
+    "catchpoint", "rigor", "keynote", "kube-probe", "elb-healthchecker", "googlehc",
+    "aws-health", "azure-traffic-manager",
+    "w3c_validator", "w3c-checklink", "linkchecker", "deadlinkchecker",
+    "brokenlinkcheck", "linkwalker", "checkbot",
+    // Security Scanners
+    "nessus", "qualys", "nmap", "nikto", "openvas", "burpsuite", "owasp", "sqlmap",
+    "dirbuster", "gobuster", "wpscan", "nuclei", "masscan", "shodan", "censys",
+    "internetmeasurement", "zgrab", "zmapproject", "securitytrails",
+    // Feed Readers
+    "feedly", "feedparser", "feedspot", "newsblur", "inoreader", "theoldreader",
+    "netvibes", "feedbin", "feedwrangler", "miniflux", "tiny tiny rss", "liferea",
+    "netnewswire", "rssowl", "feedreader", "feedvalidator", "universalfeedparser",
+    "blogtrottr", "superfeedr",
+    // Archive / Research
+    "archive.org_bot", "wayback", "turnitinbot", "libwww", "httrack", "offline explorer",
+    // CLI / HTTP Tools
+    "curl", "wget", "httpie", "aria2", "lynx", "links", "elinks", "w3m",
+    // Headless Browsers / Automation
+    "headlesschrome", "headless", "phantomjs", "phantom", "puppeteer", "playwright",
+    "selenium", "webdriver", "cypress", "nightwatch", "zombie", "slimerjs",
+    "htmlunit", "mechanize", "scrapy", "nutch", "heritrix", "colly", "goutte",
+    // HTTP Libraries / SDKs
+    "python-requests", "python-urllib", "python-httpx", "aiohttp", "httplib2", "pycurl",
+    "axios", "node-fetch", "undici", "superagent", "got/", "needle", "bent", "phin",
+    "go-http-client", "go-resty", "apache-httpclient", "okhttp", "jersey",
+    "faraday", "rest-client", "typhoeus", "lwp", "libwww-perl", "guzzlehttp", "guzzle",
+    "reqwest", "alamofire", "nsurlsession",
+    // Scrapers / Content Extractors
+    "sitesucker", "webcopier", "teleport", "website-mirrorer", "getright", "grabber",
+    "webzip", "webscraper", "dataminer", "import.io", "embedly", "iframely", "microlink",
+    "unfurl", "open-graph-scraper",
+    // Email Pre-fetchers
+    "googleimageproxy", "yahoo-mailproxy", "mailchimp", "sendgrid", "mailgun",
+    "postmark", "sparkpost", "amazonses", "mandrill", "litmus", "email on acid",
+    "returnpath", "250ok",
+    // Preview / OG Fetchers
+    "preview", "embed", "oembed", "opengraph", "og-image", "metatags", "link-preview",
+    "card-fetch", "vkshare", "outbrain", "taboola", "flipboard", "pocket",
+    "instapaper", "summify",
+    // Generic Bot Identifiers
+    "bot", "crawl", "spider", "scraper", "checker", "scanner", "monitor", "analyzer",
+    "inspector", "validator",
+    // Misc Known Bots
+    "360spider", "acunetix", "addthis", "cis455crawler", "cliqzbot", "cocolyzebot",
+    "comodo", "crawler4j", "crystalsemanticsbot", "daum", "discobot", "domaincrawler",
+    "ezooms", "fastbot", "findlinks", "gazebobot", "gigabot", "grapeshot", "hatena",
+    "icc-crawler", "ichiro", "infoseek", "ips-agent", "iskanie", "jamesjbot",
+    "jetslide", "jooblebot", "larbin", "ltx71", "mail.ru_bot", "megaindex", "moatbot",
+    "moreover", "multiviewbot", "netcraft", "netpeakspider", "obot", "openindexspider",
+    "orangebot", "pagepeeker", "paperlibot", "plukkie", "pompos", "postrank",
+    "quora link preview", "rankactivelinkbot", "reaper", "riddler", "rivva", "sbl-bot",
+    "seokicks", "seoscanners", "siteexplorer", "snap url preview", "spbot",
+    "startmebot", "steeler", "stq_bot", "surveybot", "tineye", "toplistbot", "traackr",
+    "tweetedtimes", "twengabot", "urlappendbot", "vagabondo", "vebidoobot", "voilabot",
+    "wbsearchbot", "web-archive", "webalta", "webceo", "webmon", "wesee", "wikido",
+    "woorank", "woriobot", "wotbox", "xovibot", "y!j-asr", "yacybot", "yisouspider", "zumbot",
+];
+// Build single efficient regex from all patterns (deduplicated, longest-first)
+const _unique = [...new Set(BOT_NAMES.map(b => b.toLowerCase()))].sort((a, b) => b.length - a.length);
+const _esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const BOT_UA_PATTERN = new RegExp(_unique.map(_esc).join("|"), "i");
+const PREFETCH_HEADERS = ["purpose", "x-purpose", "x-moz", "sec-purpose"];
+const PREFETCH_VALUES = /prefetch|prerender|preview/i;
 function isBot(req) {
+    if (req.method === "HEAD")
+        return true;
+    if (req.method !== "GET")
+        return true;
     const ua = (req.headers["user-agent"] ?? "");
-    if (!ua)
+    if (!ua || ua.length < 10)
         return true;
     if (BOT_UA_PATTERN.test(ua))
         return true;
-    const purpose = (req.headers["purpose"] ?? req.headers["x-purpose"] ?? req.headers["x-moz"] ?? "");
-    if (/prefetch/i.test(purpose))
-        return true;
-    if (req.method === "HEAD")
-        return true;
+    for (const h of PREFETCH_HEADERS) {
+        const v = req.headers[h];
+        if (v && PREFETCH_VALUES.test(v))
+            return true;
+    }
     return false;
 }
 // ─── Click Tracking (async, non-blocking) ────────────────
@@ -248,7 +360,7 @@ app.use(async (req, res) => {
         return;
     }
     // Look up link
-    const link = await lookupLink(slug, domainRecord.workspace_id, domainRecord.id);
+    const link = await lookupLink(slug, domainRecord.id);
     if (!link || !link.enabled) {
         res.status(404).send(notFoundPage(host));
         return;
